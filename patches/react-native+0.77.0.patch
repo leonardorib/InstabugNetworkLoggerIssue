@@ -1,0 +1,31 @@
+diff --git a/node_modules/react-native/Libraries/Network/XMLHttpRequest.js b/node_modules/react-native/Libraries/Network/XMLHttpRequest.js
+index 7697233..47641e9 100644
+--- a/node_modules/react-native/Libraries/Network/XMLHttpRequest.js
++++ b/node_modules/react-native/Libraries/Network/XMLHttpRequest.js
+@@ -536,7 +536,26 @@ class XMLHttpRequest extends (EventTarget(...XHR_EVENTS): typeof EventTarget) {
+   }
+ 
+   send(data: any): void {
++    // Adding logs here so we can easily see it in DEV.
++    // Otherwise the reported error wouldn't be catched by anything
++    // And it wouldn't be visible in the console in DEV mode.
++    // In the release build, Instabug is able to catch the unhandled rejection
++    // and send the report to the dashboard
++    if (__DEV__) {
++      console.log(
++        'RN Send request',
++        this._method,
++        this._url,
++      )
++    }
+     if (this.readyState !== this.OPENED) {
++      if (__DEV__) {
++        console.error(
++          'Request has not been opened',
++          this._method,
++          this._url,
++        )
++      }
+       throw new Error('Request has not been opened');
+     }
+     if (this._sent) {
