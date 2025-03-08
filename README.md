@@ -1,97 +1,109 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Instabug 14.1.0 issue with Network Logger and some http requests
 
-# Getting Started
+This repo contains a minimal repro for an issue with the latest Instabug SDK for react-native.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+Make sure to add a valid Instabug token on `config.ts`.
 
-## Step 1: Start Metro
+To allow visualizing the error easily in dev, since it is an unhandled promise rejection. I'm including a patch in the patches folder that add logs to react-native. After running `npm install` it should be applied automatically by `patch-package` but ideally check under node_modules to be sure.
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+If the network logger is enabled (it is by default), the error is trigger in the network check.
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+## Issue description and investigation
 
-```sh
-# Using npm
-npm start
+After trying out upgrade from Instabug 14.0.0 to 14.1.0 we started to see a bunch of
+non-fatal errors on the "Crashes" section on our dashboard for the release build with the following message:
 
-# OR using Yarn
-yarn start
+`Error - Request has not been opened`
+
+The error is thrown from this react-native file: https://github.com/facebook/react-native/blob/110450105e140d0846c63d3d15f356beefaeb020/packages/react-native/Libraries/Network/XMLHttpRequest.js#L540. I verified by manually insertting logs there in my node_modules/eract-native.
+
+Reverting back to 14.0.0 solves it. We stop getting those.
+
+After some debugging I found that when Instabug's Network Logger is enabled, some http requests from the connectivity checks done with [@react-native-community/netinfo](https://github.com/react-native-netinfo/react-native-netinfo) (a pretty standard package to check for network status) start to throw that error. So disabling the Network Logger on 14.1.0 also solves it.
+
+The first underlying request it does when you try like `NetInfo.fetch` will trigger that. And you can't catch it. You can simulate the first request by recalling `NetInfo.configure` to reset the initial.
+
+I looked at the changes from 14.0 to 14.1 and found something that can cause issues.
+
+This is the original `XMLHttpRequest` `send` method implementation from react-native:
+https://github.com/facebook/react-native/blob/110450105e140d0846c63d3d15f356beefaeb020/packages/react-native/Libraries/Network/XMLHttpRequest.js#L538
+
+Where `send` has this signature:
+
+```tsx
+send: (data: any): void
 ```
 
-## Step 2: Build and run your app
+This is the override done by Instabug 14.0.0 on the XhrNetworkInterceptor when you have the Network Logger enabled:
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+https://github.com/Instabug/Instabug-React-Native/blob/6692f7b5d8ada49827427ad553ca7836d6a3bd85/src/utils/XhrNetworkInterceptor.ts#L94
 
-### Android
+Method is still
 
-```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
+```tsx
+send: (data: any): void
 ```
 
-### iOS
+And this is it on Instabug 14.1.0:
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+https://github.com/Instabug/Instabug-React-Native/blob/2b094ca90f714cb8058be7a6b1c8a17975f943ae/src/utils/XhrNetworkInterceptor.ts#L178
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+Now this turns into
 
-```sh
-bundle install
+```tsx
+send: async (data: any): Promise<void>
 ```
 
-Then, and every time you update your native dependencies, run:
+because it is doing:
 
-```sh
-bundle exec pod install
+```tsx
+async function (data) {
+  // ...
+  const traceparent = await getTraceparentHeader(cloneNetwork); // <--- awaiting this
+  if (traceparent) {
+    this.setRequestHeader('Traceparent', traceparent);
+  }
+  //...
+}
+
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+So something that is originally sync is now being overriden with an async operation
+that can have some delay before resolving.
 
-```sh
-# Using npm
-npm run ios
+This can break stuff that was relying on the sync behavior.
 
-# OR using Yarn
-yarn ios
+So I tried manually doing this on 14.1.0:
+
+```diff
+diff --git a/node_modules/instabug-reactnative/src/utils/XhrNetworkInterceptor.ts b/node_modules/instabug-reactnative/src/utils/XhrNetworkInterceptor.ts
+index 4443940..1862b36 100644
+--- a/node_modules/instabug-reactnative/src/utils/XhrNetworkInterceptor.ts
++++ b/node_modules/instabug-reactnative/src/utils/XhrNetworkInterceptor.ts
+@@ -175,7 +175,7 @@ export default {
+       originalXHRSetRequestHeader.apply(this, [header, value]);
+     };
+
+-    XMLHttpRequest.prototype.send = async function (data) {
++    XMLHttpRequest.prototype.send = function (data) {
+       const cloneNetwork = JSON.parse(JSON.stringify(network));
+       cloneNetwork.requestBody = data ? data : '';
+
+@@ -310,10 +310,10 @@ export default {
+       }
+
+       cloneNetwork.startTime = Date.now();
+-      const traceparent = await getTraceparentHeader(cloneNetwork);
+-      if (traceparent) {
+-        this.setRequestHeader('Traceparent', traceparent);
+-      }
++      // const traceparent = await getTraceparentHeader(cloneNetwork);
++      // if (traceparent) {
++      //   this.setRequestHeader('Traceparent', traceparent);
++      // }
+       originalXHRSend.apply(this, [data]);
+     };
+     isInterceptorEnabled = true;
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+And it fixes the issue.
