@@ -8,6 +8,12 @@ To allow visualizing the error easily in dev, since it is an unhandled promise r
 
 If the network logger is enabled (it is by default), the error is trigger in the network check.
 
+
+
+https://github.com/user-attachments/assets/3362414f-66ea-47f1-8d84-53dbeea3d452
+
+
+
 ## Issue description and investigation
 
 After trying out upgrade from Instabug 14.0.0 to 14.1.0 we started to see a bunch of
