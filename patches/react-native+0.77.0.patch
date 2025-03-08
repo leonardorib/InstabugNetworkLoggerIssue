@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native/Libraries/Network/XMLHttpRequest.js b/node_modules/react-native/Libraries/Network/XMLHttpRequest.js
-index 7697233..47641e9 100644
+index 7697233..15a8497 100644
 --- a/node_modules/react-native/Libraries/Network/XMLHttpRequest.js
 +++ b/node_modules/react-native/Libraries/Network/XMLHttpRequest.js
 @@ -536,7 +536,26 @@ class XMLHttpRequest extends (EventTarget(...XHR_EVENTS): typeof EventTarget) {
@@ -13,7 +13,7 @@ index 7697233..47641e9 100644
 +    // and send the report to the dashboard
 +    if (__DEV__) {
 +      console.log(
-+        'RN Send request',
++        '[RN Patch] RN Send request',
 +        this._method,
 +        this._url,
 +      )
@@ -21,7 +21,7 @@ index 7697233..47641e9 100644
      if (this.readyState !== this.OPENED) {
 +      if (__DEV__) {
 +        console.error(
-+          'Request has not been opened',
++          '[RN Patch] Request has not been opened',
 +          this._method,
 +          this._url,
 +        )
